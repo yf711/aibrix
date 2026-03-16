@@ -16,11 +16,23 @@ limitations under the License.
 
 package types
 
+import v1 "k8s.io/api/core/v1"
+
 // Router defines the interface for routing logic to select target pods.
 type Router interface {
 	// Route selects a target pod from the provided list of pods.
 	// The input pods is guaranteed to be non-empty and contain only routable pods.
 	Route(ctx *RoutingContext, readyPodList PodList) (string, error)
+}
+
+// PodScorer computes a continuous score for a single pod.
+// Lower scores indicate a more preferred pod (consistent with least-X conventions).
+// Implementations should return math.MaxFloat64 when no valid metric is available,
+// so that the pod is treated as the least preferred rather than being filtered out.
+type PodScorer interface {
+	// ScorePod returns a non-negative continuous score for the given pod.
+	// Lower is better. math.MaxFloat64 signals "no data / prefer others".
+	ScorePod(ctx *RoutingContext, pod *v1.Pod) float64
 }
 
 // QueueRouter defines the interface for routers that contains built-in queue and

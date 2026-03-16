@@ -49,6 +49,27 @@ func NewLeastKvCacheRouter() (types.Router, error) {
 	}, nil
 }
 
+// ScorePod implements types.PodScorer.
+// Returns the combined KV+CPU cache usage percentage for the pod (lower is better).
+// If only one of the two metrics is available, returns that metric's value rather than MaxFloat64.
+// Returns math.MaxFloat64 only when both metrics are unavailable.
+func (r leastKvCacheRouter) ScorePod(ctx *types.RoutingContext, pod *v1.Pod) float64 {
+	gpuCache, gpuErr := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.KVCacheUsagePerc)
+	cpuCache, cpuErr := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.CPUCacheUsagePerc)
+
+	if gpuErr != nil && cpuErr != nil {
+		return math.MaxFloat64
+	}
+	var total float64
+	if gpuErr == nil {
+		total += gpuCache.GetSimpleValue()
+	}
+	if cpuErr == nil {
+		total += cpuCache.GetSimpleValue()
+	}
+	return total
+}
+
 func (r leastKvCacheRouter) Route(ctx *types.RoutingContext, readyPodList types.PodList) (string, error) {
 	var targetPod *v1.Pod
 	minKvCache := math.MaxFloat64
