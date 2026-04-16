@@ -78,7 +78,7 @@ func (s *Server) HandleRequestBody(ctx context.Context, requestID string, req *e
 	routingKey := buildRoutingKey(tenantID, model)
 	routingCtx.RoutingKey = routingKey
 
-	// early reject if model doesn't exist or no pods are ready
+	// early reject if model (or composite tenant:model key) doesn't exist or no pods are ready
 	var podsArr types.PodList
 	podsArr, errRes = s.validateModelAvailability(requestID, routingKey)
 	if errRes != nil {

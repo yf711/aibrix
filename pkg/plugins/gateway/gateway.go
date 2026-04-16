@@ -249,7 +249,6 @@ func (s *Server) handleProcessingRequest(st *processState, req *extProcPb.Proces
 		if st.routerCtx != nil {
 			st.ctx = st.routerCtx
 			st.model = st.routerCtx.Model
-			st.routingKey = st.routerCtx.Model // Routing key defaults to model; refined in RequestBody phase.
 		}
 		st.metricLabel = "gateway_req_headers"
 
