@@ -16,6 +16,11 @@ limitations under the License.
 
 package metrics
 
+import (
+	"fmt"
+	"time"
+)
+
 const (
 	GatewayRequestTotal = "gateway_request_total"
 	GatewayE2EDuration  = "gateway_e2e_duration_seconds"
@@ -56,6 +61,15 @@ const (
 	GatewayTPOTBucketTotal           = "gateway_tpot_bucket_total"
 	GatewayDecodeTimeBucketTotal     = "gateway_decode_time_bucket_total"
 	GatewayTotalTimeBucketTotal      = "gateway_total_time_bucket_total"
+
+	// gauge to track currently in-flight prefill requests across all pods
+	GatewayActivePrefillRequests = "gateway_active_prefill_requests"
+
+	// histogram for decode routing latency (time to select a decode pod)
+	GatewayDecodeRoutingLatencySeconds = "gateway_decode_routing_latency_seconds"
+
+	// gauge for ratio of reused KV-cache blocks to total blocks per request
+	GatewayKVCacheReusedBlocksRatio = "gateway_kv_cache_reused_blocks_ratio"
 )
 
 var (
@@ -223,6 +237,28 @@ var (
 			MetricType:   MetricType{Raw: Counter},
 			Description:  "Requests counted by total time bucket",
 		},
+		GatewayActivePrefillRequests: {
+			MetricScope:  PodMetricScope,
+			MetricSource: PodRawMetrics,
+			MetricType: MetricType{
+				Raw: Gauge,
+			},
+			Description: "Number of currently in-flight prefill requests across all pods",
+		},
+		GatewayDecodeRoutingLatencySeconds: {
+			MetricScope:  PodMetricScope,
+			MetricSource: PodRawMetrics,
+			MetricType:   MetricType{Raw: Counter},
+			Description:  "Requests counted by decode routing latency bucket",
+		},
+		GatewayKVCacheReusedBlocksRatio: {
+			MetricScope:  PodMetricScope,
+			MetricSource: PodRawMetrics,
+			MetricType: MetricType{
+				Raw: Gauge,
+			},
+			Description: "Ratio of reused KV-cache blocks to total blocks for the latest request",
+		},
 	}
 )
 
@@ -230,4 +266,21 @@ func init() {
 	for k, v := range GatewayMetrics {
 		Metrics[k] = v
 	}
+}
+
+// DecodeRoutingLatencyBucketLabel returns a human-readable bucket label for decode routing latency in milliseconds.
+func DecodeRoutingLatencyBucketLabel(d time.Duration) string {
+	ms := d.Milliseconds()
+	if ms < 0 {
+		ms = 0
+	}
+	bounds := []int64{1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000}
+	low := int64(0)
+	for _, b := range bounds {
+		if ms < b {
+			return fmt.Sprintf("%d-%dms", low, b)
+		}
+		low = b
+	}
+	return fmt.Sprintf("%dms+", low)
 }

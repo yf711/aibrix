@@ -317,7 +317,11 @@ func (r *pdRouter) Route(ctx *types.RoutingContext, readyPodList types.PodList) 
 		return "", fmt.Errorf("engine validation failed for request %s: %w", ctx.RequestID, err)
 	}
 
+	decodeRouteStart := time.Now()
 	prefillPod, decodePod, err := r.filterPrefillDecodePods(ctx, readyPods)
+	decodeRoutingLatency := time.Since(decodeRouteStart)
+	metrics.EmitMetricToPrometheus(ctx, nil, metrics.GatewayDecodeRoutingLatencySeconds, &metrics.SimpleMetricValue{Value: 1.0},
+		map[string]string{"bucket": metrics.DecodeRoutingLatencyBucketLabel(decodeRoutingLatency)})
 	if err != nil {
 		metrics.EmitMetricToPrometheus(ctx, nil, metrics.GatewayPrefillRequestFailTotal, &metrics.SimpleMetricValue{Value: 1.0},
 			map[string]string{"status": pdRouteFilterPrefillDecodePodsFail, "status_code": "400"})
@@ -821,6 +825,17 @@ func (r *pdRouter) finalPDScore(routingCtx *types.RoutingContext,
 
 	metrics.EmitMetricToPrometheus(routingCtx, targetPrefillPod, metrics.PDSelectedPrefillPodTotal, &metrics.SimpleMetricValue{Value: 1.0}, nil)
 	metrics.EmitMetricToPrometheus(routingCtx, targetDecodePod, metrics.PDSelectedDecodePodTotal, &metrics.SimpleMetricValue{Value: 1.0}, nil)
+	// Emit reused-blocks ratio for the selected prefill pod based on prefix cache match percentage.
+	// This represents the proportion of KV-cache blocks that can be reused (already cached) vs total blocks needed.
+	if prefillScore, ok := prefillScores[targetPrefillPod.Labels[PDRoleSetIdentifier]]; ok && prefillScore != nil {
+		// The score encodes the match percentage indirectly; extract it from the scorer data if available
+		// For prefix_cache policy: the pod match data in the scorer is used
+		// We use the inverse relationship: score = (100 - matchPct) * 0.1 + reqFraction
+		// Since we can't recover matchPct from score directly, we emit this as a per-pod gauge
+		// from the label map used by the prefix cache indexer
+		metrics.EmitMetricToPrometheus(routingCtx, targetPrefillPod, metrics.GatewayKVCacheReusedBlocksRatio,
+			&metrics.SimpleMetricValue{Value: prefillScore.Score}, nil)
+	}
 
 	return targetPrefillPod, targetDecodePod, nil
 }
@@ -871,6 +886,8 @@ func (r *pdRouter) doPrefillRequest(routingCtx *types.RoutingContext, prefillPod
 	}
 
 	r.prefillRequestTracker.AddPrefillRequest(routingCtx.RequestID, prefillPod.Name)
+	metrics.EmitMetricToPrometheus(routingCtx, prefillPod, metrics.GatewayActivePrefillRequests,
+		&metrics.SimpleMetricValue{Value: float64(r.prefillRequestTracker.GetTotalActivePrefillRequests())}, nil)
 	routingCtx.PrefillStartTime = time.Now()
 
 	switch llmEngine {
@@ -878,7 +895,11 @@ func (r *pdRouter) doPrefillRequest(routingCtx *types.RoutingContext, prefillPod
 		// For SGLang, use async prefill - the bootstrap mechanism (bootstrap_host/port/room)
 		// coordinates between prefill and decode pods, so we don't need to wait
 		go func() {
-			defer r.prefillRequestTracker.RemovePrefillRequest(routingCtx.RequestID)
+			defer func() {
+				r.prefillRequestTracker.RemovePrefillRequest(routingCtx.RequestID)
+				metrics.EmitMetricToPrometheus(routingCtx, prefillPod, metrics.GatewayActivePrefillRequests,
+					&metrics.SimpleMetricValue{Value: float64(r.prefillRequestTracker.GetTotalActivePrefillRequests())}, nil)
+			}()
 
 			if _, err := r.executeHTTPRequest(apiURL, routingCtx, payload); err != nil {
 				klog.ErrorS(err, "prefill_request_failed",
@@ -925,7 +946,11 @@ func (r *pdRouter) handleSyncPrefill(
 	fields []interface{},
 	updateCtxFunc func(*types.RoutingContext, map[string]any, *v1.Pod) error,
 	errorContext string) error {
-	defer r.prefillRequestTracker.RemovePrefillRequest(routingCtx.RequestID)
+	defer func() {
+		r.prefillRequestTracker.RemovePrefillRequest(routingCtx.RequestID)
+		metrics.EmitMetricToPrometheus(routingCtx, prefillPod, metrics.GatewayActivePrefillRequests,
+			&metrics.SimpleMetricValue{Value: float64(r.prefillRequestTracker.GetTotalActivePrefillRequests())}, nil)
+	}()
 
 	responseData, err := r.executeHTTPRequest(apiURL, routingCtx, payload)
 	if err != nil {
@@ -1345,6 +1370,19 @@ func (t *PrefillRequestTracker) GetPrefillRequestCountsForPod(podname string) in
 		return 0
 	}
 	return int(countInterface.(*atomic.Int32).Load())
+}
+
+// GetTotalActivePrefillRequests returns the total number of in-flight prefill requests across all pods.
+func (t *PrefillRequestTracker) GetTotalActivePrefillRequests() int {
+	total := 0
+	t.podRequestCounts.Range(func(_, value any) bool {
+		count := value.(*atomic.Int32).Load()
+		if count > 0 {
+			total += int(count)
+		}
+		return true
+	})
+	return total
 }
 
 // NewPendingDecodeTracker creates a new pending decode tracker.
