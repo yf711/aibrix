@@ -34,7 +34,11 @@ func (s *Server) HandleResponseHeaders(ctx context.Context, requestID string, mo
 	var processingErrorCode int
 	defer func() {
 		if isProcessingError {
-			s.cache.DoneRequestCount(routerCtx, requestID, model, 0)
+			doneKey := model
+			if routerCtx != nil && routerCtx.RoutingKey != "" {
+				doneKey = routerCtx.RoutingKey
+			}
+			s.cache.DoneRequestCount(routerCtx, requestID, doneKey, 0)
 			if routerCtx != nil {
 				routerCtx.Delete()
 			}

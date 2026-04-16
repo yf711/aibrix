@@ -104,6 +104,10 @@ const (
 
 	// Engine Types
 	EngineXdit = "xdit"
+
+	// Multi-Tenant Routing
+	HeaderTenantID  = "x-tenant-id"
+	DefaultTenantID = "default"
 )
 
 var (

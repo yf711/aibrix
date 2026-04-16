@@ -28,6 +28,23 @@ import (
 	"github.com/vllm-project/aibrix/pkg/utils"
 )
 
+func Test_buildRoutingKey(t *testing.T) {
+	tests := []struct {
+		tenantID string
+		model    string
+		expected string
+	}{
+		{"", "gpt-4", "gpt-4"},
+		{DefaultTenantID, "gpt-4", "gpt-4"},
+		{"acme", "gpt-4", "acme:gpt-4"},
+		{"tenant-a", "llama-3", "tenant-a:llama-3"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, buildRoutingKey(tt.tenantID, tt.model),
+			"buildRoutingKey(%q, %q)", tt.tenantID, tt.model)
+	}
+}
+
 func Test_ValidateRequestBody(t *testing.T) {
 	testCases := []struct {
 		message     string

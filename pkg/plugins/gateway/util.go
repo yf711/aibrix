@@ -44,6 +44,17 @@ var (
 	POD_NAME = os.Getenv("POD_NAME")
 )
 
+// buildRoutingKey constructs the cache lookup key for a request.
+// When a non-default tenant is specified, it returns "tenantID:model" to enable
+// multi-tenant isolation. For the default tenant (or empty), it returns the
+// bare model name so that existing single-tenant deployments are unaffected.
+func buildRoutingKey(tenantID, model string) string {
+	if tenantID == "" || tenantID == DefaultTenantID {
+		return model
+	}
+	return tenantID + ":" + model
+}
+
 // chatReqMinimal is a lightweight alternative to openai.ChatCompletionNewParams used
 // in validateRequestBody. It avoids the reflection-heavy apijson decoder and gjson
 // parsing in the openai SDK by capturing only the fields we actually need.

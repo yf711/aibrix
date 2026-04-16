@@ -69,9 +69,18 @@ func (s *Server) HandleRequestBody(ctx context.Context, requestID string, req *e
 	routingCtx.Message = message
 	routingCtx.ReqBody = body.RequestBody.GetBody()
 
+	// Extract tenant identifier for multi-tenant routing.
+	tenantID := routingCtx.ReqHeaders[HeaderTenantID]
+	if tenantID == "" {
+		tenantID = DefaultTenantID
+	}
+	routingCtx.TenantID = tenantID
+	routingKey := buildRoutingKey(tenantID, model)
+	routingCtx.RoutingKey = routingKey
+
 	// early reject if model doesn't exist or no pods are ready
 	var podsArr types.PodList
-	podsArr, errRes = s.validateModelAvailability(requestID, model)
+	podsArr, errRes = s.validateModelAvailability(requestID, routingKey)
 	if errRes != nil {
 		return errRes, model, routingCtx, stream, term
 	}
@@ -143,7 +152,7 @@ func (s *Server) HandleRequestBody(ctx context.Context, requestID string, req *e
 	}
 
 	routingCtx.RequestEndTime = time.Now()
-	term = s.cache.AddRequestCount(routingCtx, requestID, model)
+	term = s.cache.AddRequestCount(routingCtx, requestID, routingKey)
 
 	return &extProcPb.ProcessingResponse{
 		Response: &extProcPb.ProcessingResponse_RequestBody{

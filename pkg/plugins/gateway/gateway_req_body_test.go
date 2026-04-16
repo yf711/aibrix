@@ -676,3 +676,78 @@ func Test_handleRequestBody(t *testing.T) {
 		})
 	}
 }
+
+// Test_handleRequestBody_MultiTenant verifies composite key routing for multi-tenant deployments.
+func Test_handleRequestBody_MultiTenant(t *testing.T) {
+	routingalgorithms.Init()
+
+	tests := []struct {
+		name     string
+		tenantID string
+		wantKey  string // expected cache lookup key
+	}{
+		{"no tenant header - defaults to bare model", "", "test-model"},
+		{"default tenant - uses bare model", "default", "test-model"},
+		{"custom tenant - uses composite key", "acme", "acme:test-model"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockCache := &MockCache{Cache: cache.NewForTest()}
+			mockCache.On("HasModel", tt.wantKey).Return(true)
+			podList := &utils.PodArray{
+				Pods: []*v1.Pod{{
+					Status: v1.PodStatus{
+						PodIP:      "10.0.0.1",
+						Conditions: []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionTrue}},
+					},
+				}},
+			}
+			mockCache.On("ListPodsByModel", tt.wantKey).Return(podList, nil)
+			mockCache.On("AddRequestCount", mock.Anything, mock.Anything, tt.wantKey).Return(int64(1))
+
+			mockGW := &MockGatewayClient{}
+			mockGWv1 := &MockGatewayV1Client{}
+			mockHTTP := &MockHTTPRouteClient{}
+			mockGW.On("GatewayV1").Return(mockGWv1)
+			mockGWv1.On("HTTPRoutes", "aibrix-system").Return(mockHTTP)
+			route := &gatewayv1.HTTPRoute{
+				Status: gatewayv1.HTTPRouteStatus{
+					RouteStatus: gatewayv1.RouteStatus{
+						Parents: []gatewayv1.RouteParentStatus{{
+							Conditions: []metav1.Condition{
+								{Type: string(gatewayv1.RouteConditionAccepted), Reason: string(gatewayv1.RouteReasonAccepted), Status: metav1.ConditionTrue},
+								{Type: string(gatewayv1.RouteConditionResolvedRefs), Reason: string(gatewayv1.RouteReasonResolvedRefs), Status: metav1.ConditionTrue},
+							},
+						}},
+					},
+				},
+			}
+			mockHTTP.On("Get", mock.Anything, "test-model-router", mock.Anything).Return(route, nil)
+
+			server := &Server{cache: mockCache, gatewayClient: mockGW}
+
+			req := &extProcPb.ProcessingRequest{
+				Request: &extProcPb.ProcessingRequest_RequestBody{
+					RequestBody: &extProcPb.HttpBody{
+						Body: []byte(`{"model": "test-model", "messages": [{"role": "user", "content": "hi"}]}`),
+					},
+				},
+			}
+
+			routingCtx := types.NewRoutingContext(context.Background(), "", "test-model", "", "test-req-id", "test-user")
+			routingCtx.ReqPath = PathChatCompletions
+			if tt.tenantID != "" {
+				routingCtx.ReqHeaders[HeaderTenantID] = tt.tenantID
+			}
+
+			_, model, routingCtx, _, _ := server.HandleRequestBody(routingCtx, "test-req-id", req, utils.User{Name: "test-user"})
+
+			assert.Equal(t, "test-model", model, "bare model name should be returned")
+			assert.Equal(t, tt.wantKey, routingCtx.RoutingKey, "routing key")
+			mockCache.AssertExpectations(t)
+		})
+	}
+}

@@ -59,6 +59,8 @@ type RoutingContext struct {
 	context.Context
 	Algorithm      RoutingAlgorithm
 	Model          string
+	TenantID       string // Tenant identifier for multi-tenant routing; defaults to "default".
+	RoutingKey     string // Composite key (tenantID:model) used for cache lookups.
 	Engine         string
 	Stream         bool
 	Message        string
@@ -311,6 +313,8 @@ func (r *RoutingContext) reset(ctx context.Context, algorithms RoutingAlgorithm,
 	r.Context = ctx
 	r.Algorithm = algorithms
 	r.Model = model
+	r.TenantID = ""
+	r.RoutingKey = ""
 	r.Engine = ""
 	r.Stream = false
 	r.Message = message
