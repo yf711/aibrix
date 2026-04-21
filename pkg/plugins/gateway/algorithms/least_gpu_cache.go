@@ -49,6 +49,17 @@ func NewLeastGpuCacheRouter() (types.Router, error) {
 	}, nil
 }
 
+// ScorePod implements types.PodScorer.
+// Returns the GPU cache usage percentage for the pod (lower is better).
+// Returns math.MaxFloat64 when no metric is available.
+func (r leastGpuCacheRouter) ScorePod(ctx *types.RoutingContext, pod *v1.Pod) float64 {
+	gpuCache, err := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.GPUCacheUsagePerc)
+	if err != nil {
+		return math.MaxFloat64
+	}
+	return gpuCache.GetSimpleValue()
+}
+
 func (r leastGpuCacheRouter) Route(ctx *types.RoutingContext, readyPodList types.PodList) (string, error) {
 	var targetPod *v1.Pod
 	minGpuCache := math.MaxFloat64

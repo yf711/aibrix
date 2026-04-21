@@ -96,6 +96,17 @@ func (r *leastRequestRouter) SubscribedMetrics() []string {
 	}
 }
 
+// ScorePod implements types.PodScorer.
+// Returns the number of currently running requests for the pod (lower is better).
+// Returns math.MaxFloat64 when no metric is available.
+func (r *leastRequestRouter) ScorePod(ctx *types.RoutingContext, pod *v1.Pod) float64 {
+	runningReq, err := r.cache.GetMetricValueByPod(pod.Name, pod.Namespace, metrics.RealtimeNumRequestsRunning)
+	if err != nil {
+		return math.MaxFloat64
+	}
+	return runningReq.GetSimpleValue()
+}
+
 func selectTargetPodWithLeastRequestCount(cache cache.Cache, readyPods []*v1.Pod) *v1.Pod {
 	var targetPod *v1.Pod
 	targetPods := []string{}

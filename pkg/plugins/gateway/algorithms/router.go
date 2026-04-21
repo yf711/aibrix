@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,31 +55,67 @@ func NewRouterManager() *RouterManager {
 	return rm
 }
 
-// Validate validates if user provided routing routers is supported by gateway
+// isMultiStrategy returns true when the algorithms string encodes a comma-separated
+// list of two or more strategy names (e.g. "least-request,least-kv-cache").
+func isMultiStrategy(algorithms string) bool {
+	return strings.ContainsRune(algorithms, ',')
+}
+
+// Validate validates if user provided routing routers is supported by gateway.
+// It accepts either a single strategy name or a comma-separated list of strategy names.
+// For a comma-separated list, every named strategy must be individually registered.
 func (rm *RouterManager) Validate(algorithms string) (types.RoutingAlgorithm, bool) {
 	rm.routerMu.RLock()
 	defer rm.routerMu.RUnlock()
-	if _, ok := rm.routerFactory[types.RoutingAlgorithm(algorithms)]; ok {
-		return types.RoutingAlgorithm(algorithms), ok
-	} else {
+
+	if !isMultiStrategy(algorithms) {
+		if _, ok := rm.routerFactory[types.RoutingAlgorithm(algorithms)]; ok {
+			return types.RoutingAlgorithm(algorithms), ok
+		}
 		return RouterNotSet, false
 	}
+
+	// Multi-strategy: every individual strategy must be registered.
+	parts := strings.Split(algorithms, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, ok := rm.routerFactory[types.RoutingAlgorithm(p)]; !ok {
+			return RouterNotSet, false
+		}
+	}
+	return types.RoutingAlgorithm(algorithms), true
 }
 func Validate(algorithms string) (types.RoutingAlgorithm, bool) {
 	return defaultRM.Validate(algorithms)
 }
 
-// Select the user provided router provider supported by gateway, no error reported and fallback to random router
+// Select returns the router for the algorithm stored in ctx.Algorithm.
+// For comma-separated multi-strategy values a multiStrategyRouter is constructed and returned.
 // Call Validate before this function to ensure expected behavior.
 func (rm *RouterManager) Select(ctx *types.RoutingContext) (types.Router, error) {
 	rm.routerMu.RLock()
 	defer rm.routerMu.RUnlock()
-	if provider, ok := rm.routerFactory[ctx.Algorithm]; ok {
-		return provider(ctx)
-	} else {
+
+	alg := string(ctx.Algorithm)
+
+	if !isMultiStrategy(alg) {
+		if provider, ok := rm.routerFactory[ctx.Algorithm]; ok {
+			return provider(ctx)
+		}
 		klog.Warningf("Unsupported router strategy: %s, use %s instead.", ctx.Algorithm, RouterRandom)
 		return RandomRouter, nil
 	}
+
+	// Build a multiStrategyRouter from the comma-separated list.
+	parts := strings.Split(alg, ",")
+	router, err := newMultiStrategyRouter(rm, parts, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build multi-strategy router: %w", err)
+	}
+	return router, nil
 }
 func Select(ctx *types.RoutingContext) (types.Router, error) {
 	return defaultRM.Select(ctx)

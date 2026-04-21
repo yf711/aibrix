@@ -48,6 +48,17 @@ func NewLeastBusyTimeRouter() (types.Router, error) {
 	}, nil
 }
 
+// ScorePod implements types.PodScorer.
+// Returns the GPU busy time ratio for the pod (lower is better).
+// Returns math.MaxFloat64 when no metric is available.
+func (r leastBusyTimeRouter) ScorePod(_ *types.RoutingContext, pod *v1.Pod) float64 {
+	busyTimeRatio, err := r.cache.GetMetricValueByPod(pod.Name, pod.Namespace, metrics.GPUBusyTimeRatio)
+	if err != nil {
+		return math.MaxFloat64
+	}
+	return busyTimeRatio.GetSimpleValue()
+}
+
 func (r leastBusyTimeRouter) Route(ctx *types.RoutingContext, readyPodList types.PodList) (string, error) {
 	var targetPod *v1.Pod
 	minBusyTimeRatio := math.MaxFloat64 // <= 1 in general

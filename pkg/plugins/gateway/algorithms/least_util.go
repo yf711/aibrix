@@ -48,6 +48,17 @@ func NewLeastUtilRouter() (types.Router, error) {
 	}, nil
 }
 
+// ScorePod implements types.PodScorer.
+// Returns the engine utilization for the pod (lower is better).
+// Returns math.MaxFloat64 when no metric is available.
+func (r leastUtilRouter) ScorePod(ctx *types.RoutingContext, pod *v1.Pod) float64 {
+	utilization, err := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.EngineUtilization)
+	if err != nil {
+		return math.MaxFloat64
+	}
+	return utilization.GetSimpleValue()
+}
+
 func (r leastUtilRouter) Route(ctx *types.RoutingContext, readyPodList types.PodList) (string, error) {
 	var targetPod *v1.Pod
 	minUtilization := math.MaxFloat64 // <= 1 in general
