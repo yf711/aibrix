@@ -56,24 +56,25 @@ func (r throughputRouter) Route(ctx *types.RoutingContext, readyPodList types.Po
 	readyPods := readyPodList.All()
 
 	for _, pod := range readyPods {
-		promptThroughput, err := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.AvgPromptToksPerReq)
+		promptToksPerReq, err := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.AvgPromptToksPerReq)
 		if err != nil {
 			klog.Error(err)
 			continue
 		}
-		generationThroughput, err := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.AvgGenerationToksPerReq)
+		generationToksPerReq, err := r.cache.GetMetricValueByPodModel(pod.Name, pod.Namespace, ctx.Model, metrics.AvgGenerationToksPerReq)
 		if err != nil {
 			klog.Error(err)
 			continue
 		}
 
-		// processing prompt tokens is twice as expensive than generation tokens
-		totalThroughput := 2*promptThroughput.GetSimpleValue() + generationThroughput.GetSimpleValue()
-		klog.V(4).Infof("pod: %v, podIP: %v, promptThroughput: %v, generationThroughput: %v, totalThroughput: %v",
-			pod.Name, pod.Status.PodIP, promptThroughput, generationThroughput, totalThroughput)
+		// processing prompt tokens is twice as expensive as generation tokens (toks/req)
+		totalWeightedTokens := 2*promptToksPerReq.GetSimpleValue() + generationToksPerReq.GetSimpleValue()
+		klog.V(4).Infof("pod: %v, podIP: %v, promptToksPerReq: %v, generationToksPerReq: %v, totalWeightedTokens: %v",
+			pod.Name, pod.Status.PodIP, promptToksPerReq, generationToksPerReq, totalWeightedTokens)
 
-		if totalThroughput <= minCount {
-			minCount = totalThroughput
+		// choose the pod with the lowest totalWeightedTokens (lower is better per AIBrix definition)
+		if totalWeightedTokens <= minCount {
+			minCount = totalWeightedTokens
 			targetPod = pod
 		}
 	}
@@ -92,7 +93,7 @@ func (r throughputRouter) Route(ctx *types.RoutingContext, readyPodList types.Po
 
 func (r *throughputRouter) SubscribedMetrics() []string {
 	return []string{
-		metrics.AvgPromptThroughputToksPerS,
-		metrics.AvgGenerationThroughputToksPerS,
+		metrics.AvgPromptToksPerReq,
+		metrics.AvgGenerationToksPerReq,
 	}
 }
